@@ -9,6 +9,7 @@ import Dynapse1Utils as ut
 import NetworkGenerator as n
 from NetworkGenerator import Neuron
 import numpy as np
+import matplotlib.pyplot as plt
 import random
 
 def gaussian(x, mu, sigma = 1.0):
@@ -87,8 +88,8 @@ def gen_param_group_1core():
 
     # weight of AMPA
     # NOTE: !!!!!!!!!!!!!!!!!!!!!!! remember to set the weight of AMPA !!!!!!!!!!!!!!!!!!!!!!!
-    paramGroup.param_map["PS_WEIGHT_EXC_F_N"].coarse_value = 6
-    paramGroup.param_map["PS_WEIGHT_EXC_F_N"].fine_value = 100
+    paramGroup.param_map["PS_WEIGHT_EXC_F_N"].coarse_value = 6 
+    paramGroup.param_map["PS_WEIGHT_EXC_F_N"].fine_value = 40
 
     # leakage of NMDA
     paramGroup.param_map["NPDPIE_TAU_S_P"].coarse_value = 4
@@ -116,7 +117,7 @@ def gen_param_group_1core():
 
     # leakage of GABA_B
     paramGroup.param_map["NPDPII_TAU_S_P"].coarse_value = 4
-    paramGroup.param_map["NPDPII_TAU_S_P"].fine_value = 255
+    paramGroup.param_map["NPDPII_TAU_S_P"].fine_value = 80
 
     # gain of GABA_B
     paramGroup.param_map["NPDPII_THR_S_P"].coarse_value = 5
@@ -169,13 +170,13 @@ core_id_inh = 1
 # set parameters of excitatory population
 paramGroupExc = gen_param_group_1core()
 paramGroupExc.param_map["NPDPIE_THR_F_P"].coarse_value = 3 # ampa gain
-paramGroupExc.param_map["NPDPIE_THR_F_P"].fine_value = 80 # ampa gain
-paramGroupExc.param_map["NPDPIE_TAU_F_P"].coarse_value = 4 # ampa leakage
+paramGroupExc.param_map["NPDPIE_THR_F_P"].fine_value = 15 # ampa gain
+paramGroupExc.param_map["NPDPIE_TAU_F_P"].coarse_value = 3 # ampa leakage
 paramGroupExc.param_map["NPDPIE_TAU_F_P"].fine_value = 80 # ampa leakage
 
 # set parameters of inhibitory population
 paramGroupInh = gen_param_group_1core()
-paramGroupInh.param_map["NPDPIE_THR_F_P"].coarse_value = 4 # ampa gain
+paramGroupInh.param_map["NPDPIE_THR_F_P"].coarse_value = 2 # ampa gain
 paramGroupInh.param_map["NPDPIE_THR_F_P"].fine_value = 80 # ampa gain
 paramGroupInh.param_map["NPDPIE_TAU_F_P"].coarse_value = 4 # ampa leakage
 paramGroupInh.param_map["NPDPIE_TAU_F_P"].fine_value = 80 # ampa leakage
@@ -188,10 +189,10 @@ model.update_parameter_group(paramGroupExc, chip_id, core_id_exc)
 model.update_parameter_group(paramGroupInh, chip_id, core_id_inh)
 
 # define the network parameters
-exc_offset = 5 # lowest excitatory neuron id
+exc_offset = 1 # lowest excitatory neuron id
 num_exc = 32
 num_inh = 8
-input_rate = 100
+input_rates = [20, 40, 60, 80, 100, 120]
 duration = 2
 spike_gen_id = 50
 ei_rate = 1 # probability of an excitatory synapse between any pair of excitatory and inhibitory neurons
@@ -243,54 +244,73 @@ new_config = net_gen.make_dynapse1_configuration()
 model.apply_configuration(new_config)
 
 
-
-
-
-# set up Poisson spike generator
-spikegen_global_id = ut.get_global_id(chip_id, core_id_exc, spike_gen_id)
-poisson_gen = model.get_poisson_gen()
-poisson_gen.set_chip_id(chip_id)
-poisson_gen.write_poisson_rate_hz(spikegen_global_id, input_rate)
-
 # get the global neuron IDs of the neurons
 monitored_global_nids_exc = [ut.get_global_id(chip_id, core_id_exc, nid_exc) for nid_exc in nids_exc]
 monitored_global_nids_inh = [ut.get_global_id(chip_id, core_id_inh, nid_inh) for nid_inh in nids_inh]
 monitored_global_nids = monitored_global_nids_exc + monitored_global_nids_inh
 
-# create a graph to monitor the spikes of this neuron
-graph, filter_node, sink_node = ut.create_neuron_select_graph(model, monitored_global_nids)
 
-# start graph
-graph.start()
+# set up spike generator
+spikegen_global_id = ut.get_global_id(chip_id, core_id_exc, spike_gen_id)
+fpga_spike_gen = model.get_fpga_spike_gen()
+isi_base = 900
+repeat_mode=False
 
-# start the stimulus
-poisson_gen.start()
+for input_rate in input_rates:
+    print('input rate', input_rate, 'Hz')
 
-# ------------ get events -----------
-# clear the output buffer
-sink_node.get_buf()
-# sleep
-time.sleep(duration)
-# get the events accumulated during the past 2 sec
-events = sink_node.get_buf()
-# ------------ get events -----------
+    # set up the fpga_spike_gen
+    spike_count = input_rate * duration 
+    spike_times = np.linspace(0, duration, spike_count)
+    indices = [spikegen_global_id]*len(spike_times)
+    target_chips = [chip_id]*len(indices)
+    ut.set_fpga_spike_gen(fpga_spike_gen, spike_times, indices, target_chips, isi_base, repeat_mode)
 
-# stop the stimulus
-poisson_gen.stop()
-# stop graph
-graph.stop()
 
-# Add counter for every neuron spiked during recording
-print(monitored_global_nids)
-len_events = len(events)
-holder = np.zeros([len_events,2])
-counter = np.zeros(num_exc + num_inh + exc_offset)
-for i, evt in enumerate(events):
-    holder[i,:] = [evt.core_id * max(nids_exc) + evt.neuron_id, (evt.timestamp - events[0].timestamp)]
-    counter[evt.core_id * max(nids_exc) + evt.neuron_id] += 1
+    # create a graph to monitor the spikes of this neuron
+    graph, filter_node, sink_node = ut.create_neuron_select_graph(model, monitored_global_nids)
 
-np.save('./oscillator_holder', holder)
-np.save('./oscillator_counter', counter)
+    # start graph
+    graph.start()
+
+    # start the stimulus
+    fpga_spike_gen.start()
+
+    # ------------ get events -----------
+    # clear the output buffer
+    sink_node.get_buf()
+    # sleep
+    time.sleep(duration)
+    # get the events accumulated during the past 2 sec
+    events = sink_node.get_buf()
+    # ------------ get events -----------
+
+    # stop the stimulus
+    fpga_spike_gen.stop()
+    # stop graph
+    graph.stop()
+
+    # Add counter for every neuron spiked during recording
+    len_events = len(events)
+    holder = np.zeros([len_events,2])
+    counter = np.zeros(num_exc + num_inh + exc_offset)
+    
+    for i, evt in enumerate(events):
+        holder[i,:] = [evt.core_id * max(nids_exc) + evt.neuron_id, (evt.timestamp - events[0].timestamp)]
+        counter[evt.core_id * max(nids_exc) + evt.neuron_id] += 1
+    rates = counter / duration
+    print('rates', rates)
+
+
+    plt.scatter(holder[:,1]/1e3, holder[:,0], marker='|',color='k')
+    plt.xlabel('Time (ms)')
+    plt.ylabel('Neuron ID')
+    plt.savefig('./plots/oscillator_spikes_' + str(round(input_rate, 2))+ 'Hz')
+    plt.close()
+    np.save('./data/oscillator_holder_' + str(round(input_rate, 2))+ 'Hz', holder)
+
+
+    np.save('./data/oscillator_counter_' + str(round(input_rate, 2)) + 'Hz', counter)
 
 # close Dynapse1
 ut.close_dynapse1(store, device_name)
