@@ -52,7 +52,8 @@ model.update_parameter_group(paramGroupInh, chip_id, core_id_inh)
 exc_offset = 1 # lowest excitatory neuron id
 num_exc = 32
 num_inh = 8
-input_rates = np.linspace(1, 4, 15)
+input_rates = np.linspace(1, 4, 20)
+input_phase = np.pi
 osc_input_rate = 60
 duration = 5
 spike_gen_osc_id = 50
@@ -132,7 +133,7 @@ output_rates = []
 for input_rate in input_rates:
     print('input signal frequency:', input_rate)
     # set up input spike generators
-    input_signal = np.sin(np.arange(0, duration, 1 / 64) * input_rate * 2 * np.pi)
+    input_signal = np.sin(np.arange(0, duration, 1 / 64) * input_rate * 2 * np.pi + input_phase)
     up_spikes, down_spikes = ADM(
             input_signal,
             up_threshold=0.1,
@@ -198,14 +199,15 @@ for input_rate in input_rates:
     plt.scatter(holder[:,1]/1e3, holder[:,0], marker='|',color='k')
     plt.xlabel('Time (ms)')
     plt.ylabel('Neuron ID')
-    plt.title('Oscillator fixed input: {}, Input sine wave: {}'.format(osc_input_rate, input_rate))
+    plt.title('Oscillator fixed input: {} Hz, Input sine wave: {} Hz'.format(osc_input_rate, round(input_rate, 2), round(input_phase, 2)))
     plt.savefig('./plots/oscillator+input_spikes_' + str(round(osc_input_rate, 2))+ 'Hz_' + str(round(input_rate, 2))+ 'Hz.png')
     plt.close()
 
 plt.plot(input_rates, output_rates)
 plt.xlabel('Frequency of input sinusoid [Hz]')
 plt.ylabel('Spiking frequency of inhibitory neuron [Hz]')
-plt.savefig('./plots/oscillator+input_spikes+across_frequencies')
+plt.title('Frequency response of {} Hz oscillator, phase = {}'.format(2.4, input_phase))
+plt.savefig('./plots/oscillator+input_spikes+across_frequencies+phase={}.png'.format(round(input_phase, 2)))
 
 # close Dynapse1
 ut.close_dynapse1(store, device_name)
