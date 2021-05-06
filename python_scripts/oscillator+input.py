@@ -13,6 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from utils import gen_param_group_1core, gaussian_recurrent_excitation
+from ADM import ADM
 
 # open DYNAP-SE1 board to get Dynapse1Model
 device_name = "my_dynapse1"
@@ -51,9 +52,12 @@ model.update_parameter_group(paramGroupInh, chip_id, core_id_inh)
 exc_offset = 1 # lowest excitatory neuron id
 num_exc = 32
 num_inh = 8
-input_rates = [20, 40, 60, 80, 100, 120]
-duration = 10
-spike_gen_id = 50
+input_rates = np.linspace(1, 4, 15)
+osc_input_rate = 60
+duration = 5
+spike_gen_osc_id = 50
+spike_gen_in_up_id = 51
+spike_gen_in_dn_id = 52
 ei_rate = 1 # probability of an excitatory synapse between any pair of excitatory and inhibitory neurons
 ie_rate = 1 # probability of an inhibitory synapse between any pair of excitatory and inhibitory neurons
 nids_exc = range(exc_offset, num_exc + exc_offset)
@@ -63,14 +67,18 @@ nids_inh = range(1, num_inh + 1)
 # init a network generator
 net_gen = n.NetworkGenerator()
 
-# create spikegen
-spikegen = Neuron(chip_id, core_id_exc, spike_gen_id, True)
+# create spikegens
+spikegen_osc = Neuron(chip_id, core_id_exc, spike_gen_osc_id, True)
+spikegen_input_up = Neuron(chip_id, core_id_exc, spike_gen_in_up_id, True)
+spikegen_input_dn = Neuron(chip_id, core_id_exc, spike_gen_in_dn_id, True)
 
-# create excitatory population, connect them to spikegen
+# create excitatory population, connect them to spikegens
 exc_neurons = []
 for nid_exc in nids_exc:
     exc_neuron = Neuron(chip_id, core_id_exc, nid_exc)
-    net_gen.add_connection(spikegen, exc_neuron, dyn1.Dynapse1SynType.AMPA)
+    net_gen.add_connection(spikegen_osc, exc_neuron, dyn1.Dynapse1SynType.AMPA)
+    net_gen.add_connection(spikegen_input_up, exc_neuron, dyn1.Dynapse1SynType.AMPA)
+    net_gen.add_connection(spikegen_input_dn, exc_neuron, dyn1.Dynapse1SynType.GABA_B)
     exc_neurons.append(exc_neuron)
 
 # create inhibitory population and ei connections
@@ -109,22 +117,46 @@ monitored_global_nids_inh = [ut.get_global_id(chip_id, core_id_inh, nid_inh) for
 monitored_global_nids = monitored_global_nids_exc + monitored_global_nids_inh
 
 
-# set up spike generator
-spikegen_global_id = ut.get_global_id(chip_id, core_id_exc, spike_gen_id)
+# set up oscillator spike generator
+spikegen_osc_global_id = ut.get_global_id(chip_id, core_id_exc, spike_gen_osc_id)
 fpga_spike_gen = model.get_fpga_spike_gen()
 isi_base = 900
 repeat_mode=False
 
+spike_count = osc_input_rate * duration 
+spike_times_osc = np.linspace(0, duration, spike_count)
+indices_osc = [spikegen_osc_global_id]*len(spike_times_osc)
+target_chips_osc = [chip_id]*len(indices_osc)
+
+output_rates = []
 for input_rate in input_rates:
-    print('input rate', input_rate, 'Hz')
+    print('input signal frequency:', input_rate)
+    # set up input spike generators
+    input_signal = np.sin(np.arange(0, duration, 1 / 64) * input_rate * 2 * np.pi)
+    up_spikes, down_spikes = ADM(
+            input_signal,
+            up_threshold=0.1,
+            down_threshold=0.1,
+            sampling_rate=64,
+            refractory_period=0
+    )
 
-    # set up the fpga_spike_gen
-    spike_count = input_rate * duration 
-    spike_times = np.linspace(0, duration, spike_count)
-    indices = [spikegen_global_id]*len(spike_times)
-    target_chips = [chip_id]*len(indices)
-    ut.set_fpga_spike_gen(fpga_spike_gen, spike_times, indices, target_chips, isi_base, repeat_mode)
+    # up
+    spikegen_in_up_global_id = ut.get_global_id(chip_id, core_id_exc, spike_gen_in_up_id)
+    indices_up = [spikegen_in_up_global_id]*len(up_spikes)
+    target_chips_up = [chip_id]*len(indices_up)
 
+    # down
+    spikegen_in_dn_global_id = ut.get_global_id(chip_id, core_id_exc, spike_gen_in_dn_id)
+    indices_dn = [spikegen_in_dn_global_id]*len(down_spikes)
+    target_chips_dn = [chip_id]*len(indices_dn)
+
+
+    spike_times = np.concatenate([spike_times_osc, up_spikes, down_spikes])
+    indices = np.concatenate([indices_osc, indices_up, indices_dn])
+    target_chips = np.concatenate([target_chips_osc, target_chips_up, target_chips_dn])
+    order = np.argsort(spike_times)
+    ut.set_fpga_spike_gen(fpga_spike_gen, spike_times[order], indices[order], target_chips[order], isi_base, repeat_mode)
 
     # create a graph to monitor the spikes of this neuron
     graph, filter_node, sink_node = ut.create_neuron_select_graph(model, monitored_global_nids)
@@ -132,7 +164,7 @@ for input_rate in input_rates:
     # start graph
     graph.start()
 
-    # start the stimulus
+    # start spikegens
     fpga_spike_gen.start()
 
     # ------------ get events -----------
@@ -144,8 +176,9 @@ for input_rate in input_rates:
     events = sink_node.get_buf()
     # ------------ get events -----------
 
-    # stop the stimulus
+    # stop spikegens
     fpga_spike_gen.stop()
+
     # stop graph
     graph.stop()
 
@@ -153,25 +186,26 @@ for input_rate in input_rates:
     len_events = len(events)
     holder = np.zeros([len_events,2])
     counter = np.zeros(num_exc + num_inh + exc_offset)
-    
+
     for i, evt in enumerate(events):
         holder[i,:] = [evt.core_id * max(nids_exc) + evt.neuron_id, (evt.timestamp - events[0].timestamp)]
         counter[evt.core_id * max(nids_exc) + evt.neuron_id] += 1
     rates = counter / duration
+    output_rates.append(rates[-1])
     print('rates', rates)
 
 
     plt.scatter(holder[:,1]/1e3, holder[:,0], marker='|',color='k')
     plt.xlabel('Time (ms)')
     plt.ylabel('Neuron ID')
-    plt.title('Inh neurons spiking at {} Hz'.format(rates[-1]))
-    plt.xlim(0, 2000)
-    plt.savefig('./plots/oscillator_spikes_' + str(round(input_rate, 2))+ 'Hz')
+    plt.title('Oscillator fixed input: {}, Input sine wave: {}'.format(osc_input_rate, input_rate))
+    plt.savefig('./plots/oscillator+input_spikes_' + str(round(osc_input_rate, 2))+ 'Hz_' + str(round(input_rate, 2))+ 'Hz.png')
     plt.close()
-    np.save('./data/oscillator_holder_' + str(round(input_rate, 2))+ 'Hz', holder)
 
-
-    np.save('./data/oscillator_counter_' + str(round(input_rate, 2)) + 'Hz', counter)
+plt.plot(input_rates, output_rates)
+plt.xlabel('Frequency of input sinusoid [Hz]')
+plt.ylabel('Spiking frequency of inhibitory neuron [Hz]')
+plt.savefig('./plots/oscillator+input_spikes+across_frequencies')
 
 # close Dynapse1
 ut.close_dynapse1(store, device_name)
