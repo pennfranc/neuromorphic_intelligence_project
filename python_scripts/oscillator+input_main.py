@@ -178,14 +178,14 @@ for input_rate in input_rates:
     plt.xlabel('Time (ms)')
     plt.ylabel('Neuron ID')
     plt.title('Oscillator fixed input: {} Hz, Input sine wave: {} Hz'.format(osc_input_rate, round(input_rate, 2)))
-    #plt.savefig('./plots/oscillator+input_spikes_' + str(round(osc_input_rate, 2))+ 'Hz_' + str(round(input_rate, 2))+ 'Hz.png')
+    #plt.savefig('../plots/oscillator+input_spikes_' + str(round(osc_input_rate, 2))+ 'Hz_' + str(round(input_rate, 2))+ 'Hz.png')
     plt.close()
 
 plt.plot(input_rates, output_rates)
 plt.xlabel('Frequency of input sinusoid [Hz]')
 plt.ylabel('Spiking frequency of inhibitory neuron [Hz]')
 plt.title('Frequency response of {} Hz oscillator, phase = {}'.format(3.0, input_phase))
-plt.savefig('./plots/3.0Hz_oscillator+input_spikes+across_frequencies+phase={}.png'.format(round(input_phase, 2)))
+plt.savefig('../plots/3.0Hz_oscillator+input_spikes+across_frequencies+phase={}.png'.format(round(input_phase, 2)))
 
 # close Dynapse1
 ut.close_dynapse1(store, device_name)

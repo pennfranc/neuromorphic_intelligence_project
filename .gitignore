@@ -1,4 +1,3 @@
 .DS_Store/
-plots/
-data/
-*.png
+python_scripts/__pycache__/
+samna_info.json
