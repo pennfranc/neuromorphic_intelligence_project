@@ -15,13 +15,14 @@ from utils import gen_param_group_1core, gaussian_recurrent_excitation
 
 class Oscillator:
 
+    exc_offset = 3
+    inh_offset = 1
+
     def __init__(
         self,
         net_gen,
         spikegen_input_up,
         spikegen_input_dn,
-        exc_offset,
-        inh_offset,
         osc_input_rate=120,
         num_exc=32, num_inh=8,
         ei_rate=1, ie_rate=1
@@ -30,6 +31,8 @@ class Oscillator:
         self.core_id_exc = 0
         self.core_id_inh = 1
         self.osc_input_rate = osc_input_rate
+
+        exc_offset, inh_offset = Oscillator.get_offsets()
 
         self.nids_exc = range(exc_offset, num_exc + exc_offset)
         self.nids_inh = range(inh_offset, num_inh + inh_offset)
@@ -69,6 +72,16 @@ class Oscillator:
                 if random.uniform(0, 1) <= ie_rate:
                     net_gen.add_connection(inh_neuron, exc_neuron, dyn1.Dynapse1SynType.GABA_B)
 
+        Oscillator.update_offsets(num_inh, num_inh)
+
+    @classmethod
+    def update_offsets(cls, num_exc, num_inh):
+        cls.exc_offset += (num_exc + 1)
+        cls.inh_offset += num_inh
+
+    @classmethod 
+    def get_offsets(cls):
+        return cls.exc_offset, cls.inh_offset
         
     def get_ids(self):
         return self.nids_exc, self.nids_inh, self.spike_gen_osc_id

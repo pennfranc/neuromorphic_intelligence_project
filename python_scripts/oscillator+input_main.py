@@ -78,8 +78,6 @@ oscillator = Oscillator(
     net_gen,
     spikegen_input_up,
     spikegen_input_dn,
-    exc_offset,
-    inh_offset,
     osc_input_rate=120
 )
 
