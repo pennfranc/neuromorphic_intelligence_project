@@ -142,3 +142,4 @@ def gen_param_group_1core():
     paramGroup.param_map["IF_BUF_P"].fine_value = 80
 
     return paramGroup
+
